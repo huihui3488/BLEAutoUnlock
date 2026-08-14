@@ -1,0 +1,6 @@
+# BLEAutoUnlock 依赖清单（Python 3.10+，仅支持 Windows 10/11 x64）
+# 安装：pip install -r requirements.txt
+
+bleak>=0.21.0     # BLE 扫描（Windows 使用 WinRT 后端）
+pywin32>=306      # Windows 服务安装、DPAPI 密码加密、单实例互斥体、电源唤醒监听
+keyboard>=0.13.5  # 备用键盘解锁方案（WTSUnlockConsole 不可用时）

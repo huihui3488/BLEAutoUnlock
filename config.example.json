@@ -1,0 +1,19 @@
+{
+  "device_type": "ios",
+  "irk_key": "your-64-bit-hex-irk-key-here",
+  "android_mac": "AA:BB:CC:DD:EE:FF",
+  "windows_password": "",
+  "unlock_rssi": -60,
+  "lock_rssi": -75,
+  "scan_interval": 2,
+  "scan_duration": 2,
+  "miss_count_before_lock": 5,
+  "lock_min_elapsed": 10,
+  "unlock_hold_seconds": 3,
+  "adapter_reset_retries": 3,
+  "adapter_reset_delay": 5,
+  "irk_resolve_method": "ble_standard",
+  "irk_prand_position": "",
+  "log_level": "INFO",
+  "log_dir": "C:\\ProgramData\\BLEAutoUnlock\\logs"
+}

@@ -546,6 +546,7 @@ def main(config_path: Optional[str] = None) -> int:
         _show_error_dialog("BLEAutoUnlock 启动失败", f"{detail}")
         root.destroy()
         return 1
+    _write_crash_log("GUI 主循环已启动（窗口应已显示）")
     root.mainloop()
     instance.close()
     return 0

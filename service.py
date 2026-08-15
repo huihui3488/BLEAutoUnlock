@@ -6,8 +6,7 @@
 
 重要限制：
     Windows 服务默认运行在 Session 0，无法访问用户的交互桌面，
-    因此"键盘输入密码解锁"在服务模式下基本无效。若需要完整解锁
-    功能，推荐使用用户登录自启方式（main.py --run + 启动项/任务计划）。
+    建议使用用户登录自启方式（main.py --run + 启动项/任务计划）运行。
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "BLEAutoUnlock"
 SERVICE_DISPLAY_NAME = "BLEAutoUnlock Service"
-SERVICE_DESCRIPTION = "睡眠唤醒后根据 iPhone 蓝牙 RSSI 解锁/锁定工作站"
+SERVICE_DESCRIPTION = "睡眠唤醒后根据 iPhone 蓝牙 RSSI 自动锁屏工作站"
 
 try:
     import servicemanager

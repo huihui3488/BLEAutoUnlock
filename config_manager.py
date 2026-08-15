@@ -34,7 +34,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "android_mac": "",
     # DPAPI 加密后的 Windows 登录密码（base64），绝不明文保存
     "windows_password": "",
-    # RSSI 高于该值视为“靠近”，持续 unlock_hold_seconds 秒后触发解锁
+    # RSSI 高于该值视为“靠近”（近场判定）
     "unlock_rssi": -60,
     # RSSI 低于该值或设备消失视为“离开”
     "lock_rssi": -75,

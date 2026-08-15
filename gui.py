@@ -3,7 +3,7 @@
 功能：
 - 配置并保存：设备类型 / 命名 IRK 设备列表（可同时管理 iPhone、iPad 等）/
   Android MAC / Windows 登录密码（DPAPI 加密）
-- 蓝牙阈值：解锁 RSSI、锁定 RSSI
+- 蓝牙阈值：近场 RSSI、锁屏 RSSI
 - 判定时间：扫描间隔、单次扫描时长、靠近持续时长、离开累计时长、连续未检测次数
 - 高级选项：IRK 解析方法、prand 位置
 - 二级菜单（帮助 → RSSI 距离对照表）：查看官方分级与参考距离换算
@@ -100,7 +100,7 @@ class BLEAutoUnlockApp:
         ("0.5 m", "-45", "Immediate（Apple iBeacon < 0.5 m）"),
         ("1 m", "-51", "很近"),
         ("2 m", "-57", "Near（Apple iBeacon 0.5~3 m）"),
-        ("3 m", "-60", "Near 上限，约等于默认解锁阈值"),
+        ("3 m", "-60", "Near 上限（约 3 m）"),
         ("5 m", "-65", "中等距离"),
         ("8 m", "-72", "较远"),
         ("10 m", "-75", "Far 参考，约等于默认锁定阈值"),
@@ -134,7 +134,7 @@ class BLEAutoUnlockApp:
         if is_admin():
             self._append_log("当前进程以管理员权限运行")
         else:
-            self._append_log("提示：当前非管理员权限，键盘模拟解锁可能被系统拦截")
+            self._append_log("提示：当前非管理员权限，部分功能可能受限")
 
     # ------------------------------------------------------------- 日志与状态
 
@@ -164,7 +164,7 @@ class BLEAutoUnlockApp:
             pass  # 窗口已销毁
 
     def _update_status(self) -> None:
-        state_text = {True: "已锁定", False: "已解锁", None: "未知"}.get(
+        state_text = {True: "已锁定", False: "未锁定", None: "未知"}.get(
             self._session_state, "未知",
         )
         rssi_text = "--" if self._last_rssi is None else f"{self._last_rssi} dBm"
@@ -298,11 +298,11 @@ class BLEAutoUnlockApp:
 
         self.var_unlock_rssi = tk.StringVar(value="-60")
         self.var_lock_rssi = tk.StringVar(value="-75")
-        self._add_spin(frm_bt, 0, 0, "解锁 RSSI (≥):", self.var_unlock_rssi, -100, 0, 1)
-        self._add_spin(frm_bt, 0, 1, "锁定 RSSI (<):", self.var_lock_rssi, -100, 0, 1)
+        self._add_spin(frm_bt, 0, 0, "近场阈值 (≥):", self.var_unlock_rssi, -100, 0, 1)
+        self._add_spin(frm_bt, 0, 1, "锁屏 RSSI (<):", self.var_lock_rssi, -100, 0, 1)
         ttk.Label(
             frm_bt, foreground="#666666",
-            text="高于解锁值且持续达标后解锁；低于锁定值或消失才考虑锁定",
+            text="设备信号高于近场阈值时视为在附近；低于锁屏值或设备消失且连续未检测才考虑锁屏",
         ).grid(row=1, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 0))
 
         # ---- 判定时间
@@ -523,7 +523,7 @@ class BLEAutoUnlockApp:
             if save:
                 self.config.save()
             if unlock_rssi <= lock_rssi:
-                self._append_log("提示：解锁 RSSI 未高于锁定 RSSI，迟滞区间无效，可能频繁切换")
+                self._append_log("提示：近场阈值未高于锁屏阈值，判定区间无效，可能频繁切换")
             return True, ""
         except (ValueError, TypeError):
             return False, "请检查输入：RSSI/时间为数字，未检测次数为整数"

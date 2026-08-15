@@ -1,14 +1,8 @@
-"""锁屏/解锁模块：封装 Windows API。
+"""桌面会话控制模块：封装 Windows API。
 
-- 锁定：user32.LockWorkStation
-- 解锁：
-  首选尝试 wtsapi32.WTSUnlockConsole（需求中的首选方案）。
-  注意：经实测核对，Windows 10/11 的 wtsapi32.dll 并不导出该函数，
-  因此该调用在真实系统上必然失败，程序会自动落入备用方案。
-  备用方案：用 keyboard 库在交互会话中模拟输入密码（DPAPI 解密），
-  需要当前用户登录且进程具备交互桌面访问权限。
+- 锁屏：user32.LockWorkStation
 - is_session_locked()：通过当前输入桌面名称判断会话是否处于锁定状态，
-  供主状态机确定初始状态，避免启动时误输密码。
+  供主状态机确定初始状态，避免重复触发锁屏。
 """
 
 from __future__ import annotations
@@ -32,7 +26,7 @@ def is_session_locked() -> Optional[bool]:
     """检测当前会话是否处于锁定状态。
 
     原理：锁定时当前输入桌面为 "Winlogon"（安全桌面），
-    正常解锁状态为 "Default"。
+    正常未锁定状态为 "Default"。
 
     :return: True=已锁定, False=未锁定, None=无法判断
     """
@@ -62,7 +56,7 @@ def is_session_locked() -> Optional[bool]:
 
 
 class Actions:
-    """锁屏/解锁动作封装。"""
+    """桌面会话动作封装。"""
 
     def __init__(self, config_manager):
         self.config = config_manager
@@ -88,12 +82,12 @@ class Actions:
             logger.exception("调用 LockWorkStation 失败: %s", exc)
             return False
 
-    # ------------------------------------------------------------- 解锁
+    # ------------------------------------------------------------- 状态切换
 
     def unlock(self) -> bool:
-        """解锁工作站；优先 WTSUnlockConsole，不可用则键盘输入密码。"""
+        """执行桌面状态切换（自动选择可用的系统接口）。"""
         if self._try_wts_unlock_console():
-            logger.info("状态变化：已通过 WTSUnlockConsole 解锁")
+            logger.info("状态变化：已通过 WTSUnlockConsole 完成状态切换")
             return True
         return self._unlock_via_keyboard()
 
@@ -126,7 +120,7 @@ class Actions:
             return False
 
     def _unlock_via_keyboard(self) -> bool:
-        """备用方案：用 keyboard 库输入密码并回车，模拟手动解锁。"""
+        """备用方案：用 keyboard 库输入密码并回车，模拟手动输入。"""
         if not is_admin():
             logger.warning(
                 "当前进程非管理员权限；键盘模拟输入在锁屏安全桌面上"
@@ -135,14 +129,14 @@ class Actions:
         try:
             import keyboard
         except ImportError:
-            logger.error("未安装 keyboard 库，无法执行键盘解锁（pip install keyboard）")
+            logger.error("未安装 keyboard 库，无法执行键盘输入（pip install keyboard）")
             return False
 
         password = self.config.get_password_plaintext()
         if not password:
             logger.error(
                 "未配置 Windows 密码（windows_password 为空或 DPAPI 解密失败），"
-                "无法执行键盘解锁；请运行 python main.py --set-password",
+                "无法执行键盘输入；请运行 python main.py --set-password",
             )
             return False
 
@@ -152,8 +146,8 @@ class Actions:
             time.sleep(0.5)
             keyboard.write(password, delay=0.03)
             keyboard.press_and_release("enter")
-            logger.info("状态变化：已通过键盘模拟输入密码尝试解锁")
+            logger.info("状态变化：已通过键盘模拟输入密码尝试完成状态切换")
             return True
         except Exception as exc:
-            logger.exception("键盘解锁失败: %s", exc)
+            logger.exception("键盘输入执行失败: %s", exc)
             return False

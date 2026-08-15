@@ -9,10 +9,9 @@
   python main.py --config PATH         指定配置文件路径（默认 main.py 同目录）
 
 核心逻辑：
-  - RSSI >= unlock_rssi 且持续 unlock_hold_seconds 秒  -> 解锁
   - RSSI < lock_rssi 或设备消失，连续 miss_count_before_lock 次扫描
-    且累计超过 lock_min_elapsed 秒                      -> 锁定
-  - 介于两者之间：保持当前状态（迟滞区间，避免抖动）
+    且累计超过 lock_min_elapsed 秒                      -> 锁屏
+  - 设备信号在阈值附近波动时保持当前状态，避免频繁触发
 """
 
 from __future__ import annotations
@@ -170,7 +169,7 @@ class PowerMonitor:
 
 
 class AutoUnlockController:
-    """根据 RSSI 序列驱动锁屏/解锁状态机。"""
+    """根据 RSSI 序列驱动锁屏状态机。"""
 
     def __init__(self, config: ConfigManager, actions: Actions):
         self.config = config
@@ -188,13 +187,13 @@ class AutoUnlockController:
         else:
             logger.info("初始会话状态: %s", "已锁定" if self.locked else "未锁定")
 
-        self._good_since: Optional[float] = None   # 首次进入解锁范围的时间
+        self._good_since: Optional[float] = None   # 首次进入近场范围的时间
         self._miss_count = 0                       # 连续离开/消失次数
         self._miss_since: Optional[float] = None   # 首次离开/消失的时间
         self._last_rssi_log = 0.0                  # 上次周期日志时间
 
     def on_scan_result(self, rssi: Optional[int]) -> None:
-        """处理一次扫描结果，按需触发解锁/锁定。"""
+        """处理一次扫描结果，按需触发锁屏判定。"""
         now = time.monotonic()
 
         if rssi is not None and rssi >= self.unlock_rssi:
@@ -203,7 +202,7 @@ class AutoUnlockController:
             self._miss_since = None
             if self._good_since is None:
                 self._good_since = now
-                logger.info("目标设备进入解锁范围（RSSI=%s）", rssi)
+                logger.info("目标设备进入近场范围（RSSI=%s）", rssi)
             if self.locked is not False and (
                 now - self._good_since
             ) >= self.unlock_hold_seconds:
@@ -237,17 +236,17 @@ class AutoUnlockController:
     def _state_text(self) -> str:
         if self.locked is None:
             return "未知"
-        return "已锁定" if self.locked else "已解锁"
+        return "已锁定" if self.locked else "未锁定"
 
     def _unlock(self) -> None:
-        """执行解锁动作。"""
+        """执行桌面状态切换动作。"""
         if self.locked is False:
             return
-        logger.info("目标设备持续靠近 %.1f 秒，触发解锁", self.unlock_hold_seconds)
+        logger.info("目标设备持续靠近 %.1f 秒，执行状态切换", self.unlock_hold_seconds)
         if self.actions.unlock():
             self.locked = False
         else:
-            logger.error("解锁失败，保持当前状态")
+            logger.error("状态切换失败，保持当前状态")
         self._good_since = None
 
     def _lock(self) -> None:
@@ -342,7 +341,7 @@ def run_foreground(config_path: Optional[str] = None,
             logger.info("当前进程以管理员权限运行")
         else:
             logger.warning(
-                "当前进程非管理员权限；键盘模拟输入密码解锁可能被系统拦截"
+                "当前进程非管理员权限；部分功能可能受限"
             )
         _run_async(config, stop_event)
     except Exception:
@@ -403,7 +402,7 @@ def run_selftest(config_path: Optional[str] = None) -> int:
         if config.get("windows_password"):
             print("      windows_password 已配置（DPAPI 加密存储）")
         else:
-            print("      警告：windows_password 为空，键盘解锁方案不可用"
+            print("      警告：windows_password 为空，键盘输入方案不可用"
                   "（可用 python main.py --set-password 配置）")
     except (ConfigError, ResolverError) as exc:
         print(f"      失败：{exc}")
@@ -421,7 +420,7 @@ def run_selftest(config_path: Optional[str] = None) -> int:
 
     # 4. 权限检查
     print("[4/4] 权限检查...")
-    print(f"      管理员权限: {'是' if is_admin() else '否（键盘解锁可能被拦截）'}")
+    print(f"      管理员权限: {'是' if is_admin() else '否（部分功能可能受限）'}")
     locked = is_session_locked()
     print(f"      当前会话锁定状态: {locked}")
 
@@ -440,7 +439,7 @@ def parse_args(argv=None):
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="BLEAutoUnlock：睡眠唤醒后根据 iPhone 蓝牙 RSSI 解锁/锁定桌面",
+        description="BLEAutoUnlock：睡眠唤醒后根据 iPhone 蓝牙 RSSI 自动锁屏",
     )
     parser.add_argument("--run", action="store_true",
                         help="前台运行（调试模式，带控制台日志）")
@@ -496,7 +495,7 @@ def main(argv=None) -> int:
     if args.set_password:
         import getpass
         password = getpass.getpass(
-            "请输入 Windows 登录密码（仅用于本地解锁，DPAPI 加密存储）: ",
+            "请输入 Windows 登录密码（仅用于本地使用，DPAPI 加密存储）: ",
         )
         if not password:
             print("错误：密码不能为空")

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -28,6 +29,48 @@ from main import AutoUnlockController, PowerMonitor, SingleInstance
 from resolver import ResolverError, create_resolver, normalize_address
 
 logger = logging.getLogger(__name__)
+
+
+def _write_crash_log(message: str) -> None:
+    """把启动/运行错误追加写入 %APPDATA%\\BLEAutoUnlock\\gui_error.log。"""
+    import datetime
+    import os
+
+    try:
+        log_dir = os.environ.get("APPDATA") or os.path.expanduser("~")
+        log_dir = os.path.join(log_dir, "BLEAutoUnlock")
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, "gui_error.log")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"[{stamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def _show_error_dialog(title: str, message: str) -> None:
+    """Tk 不可用时用系统 MessageBox 弹出错误，避免无控制台看不到报错。"""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
+def _install_excepthook() -> None:
+    """把未捕获异常写入日志（窗口回调里的异常不会打印到控制台）。"""
+    import traceback
+
+    def _hook(exc_type, exc_value, exc_tb):
+        _write_crash_log(
+            "未捕获异常:\n"
+            + "".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+        )
+
+    sys.excepthook = _hook
+
+
+_install_excepthook()
 
 
 class GuiLogHandler(logging.Handler):
@@ -463,18 +506,44 @@ class BLEAutoUnlockApp:
 
 
 def main(config_path: Optional[str] = None) -> int:
-    """GUI 入口（供 main.py --gui 与打包 exe 调用）。"""
-    root = tk.Tk()
+    """GUI 入口（供 main.py --gui 与打包 exe 调用）。
+
+    启动阶段任何异常都会写入 %APPDATA%\\BLEAutoUnlock\\gui_error.log
+    并弹窗提示，避免无控制台环境下"打不开界面却看不到错误"。
+    """
+    import traceback
+
+    _write_crash_log("GUI 启动")
+    try:
+        root = tk.Tk()
+    except Exception:
+        detail = traceback.format_exc()
+        _write_crash_log(f"Tk 初始化失败:\n{detail}")
+        _show_error_dialog(
+            "BLEAutoUnlock 启动失败",
+            "图形界面初始化失败（可能是打包时缺少 Tcl/Tk 资源）。\n"
+            "详情已写入 %APPDATA%\\BLEAutoUnlock\\gui_error.log",
+        )
+        return 1
+
     root.title("BLEAutoUnlock 控制面板")
     instance = SingleInstance()
     if instance.already_running:
-        messagebox.showerror("BLEAutoUnlock", "另一个实例正在运行")
+        _write_crash_log("检测到另一个实例正在运行，本实例退出")
+        messagebox.showwarning("BLEAutoUnlock", "另一个实例正在运行，本实例退出")
         root.destroy()
         return 1
     try:
         BLEAutoUnlockApp(root, config_path)
     except ConfigError as exc:
+        _write_crash_log(f"配置错误: {exc}")
         messagebox.showerror("配置错误", str(exc))
+        root.destroy()
+        return 1
+    except Exception:
+        detail = traceback.format_exc()
+        _write_crash_log(f"界面初始化失败:\n{detail}")
+        _show_error_dialog("BLEAutoUnlock 启动失败", f"{detail}")
         root.destroy()
         return 1
     root.mainloop()
@@ -483,5 +552,4 @@ def main(config_path: Optional[str] = None) -> int:
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())

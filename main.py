@@ -53,10 +53,15 @@ class SingleInstance:
         except ImportError:
             logger.warning("缺少 pywin32，跳过单实例互斥检查")
             return
+        # pywin32 的错误码常量定义在 winerror 模块（不在 win32event 中）
+        try:
+            from winerror import ERROR_ALREADY_EXISTS
+        except ImportError:
+            ERROR_ALREADY_EXISTS = 183  # Windows 错误码：ERROR_ALREADY_EXISTS
         # 创建互斥体；若已存在则说明已有实例在运行
         self._mutex = win32event.CreateMutex(None, False, self.MUTEX_NAME)
         self._already_exists = (
-            win32api.GetLastError() == win32event.ERROR_ALREADY_EXISTS
+            win32api.GetLastError() == ERROR_ALREADY_EXISTS
         )
 
     @property

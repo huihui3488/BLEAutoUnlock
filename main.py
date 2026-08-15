@@ -440,7 +440,7 @@ def parse_args(argv=None):
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="BLEAutoUnlock：睡眠唤醒后根据 iPhone 蓝牙 RSSI 自动解锁/锁定",
+        description="BLEAutoUnlock：睡眠唤醒后根据 iPhone 蓝牙 RSSI 解锁/锁定桌面",
     )
     parser.add_argument("--run", action="store_true",
                         help="前台运行（调试模式，带控制台日志）")

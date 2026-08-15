@@ -20,8 +20,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "BLEAutoUnlock"
-SERVICE_DISPLAY_NAME = "BLE Auto Unlock Service"
-SERVICE_DESCRIPTION = "睡眠唤醒后根据 iPhone 蓝牙 RSSI 自动解锁/锁定工作站"
+SERVICE_DISPLAY_NAME = "BLEAutoUnlock Service"
+SERVICE_DESCRIPTION = "睡眠唤醒后根据 iPhone 蓝牙 RSSI 解锁/锁定工作站"
 
 try:
     import servicemanager

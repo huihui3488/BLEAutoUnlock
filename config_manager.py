@@ -14,6 +14,7 @@ import copy
 import json
 import logging
 import os
+import sys
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,15 @@ class ConfigError(Exception):
 
 
 def default_config_path() -> str:
-    """返回默认配置文件路径（与 main.py 同目录）。"""
+    """返回默认配置文件路径。
+
+    - 源码运行：与 main.py 同目录的 config.json
+    - 打包 exe 运行：%APPDATA%\\BLEAutoUnlock\\config.json
+      （避免写入 exe 所在目录失败，例如装在 Program Files 下）
+    """
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "BLEAutoUnlock", "config.json")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 

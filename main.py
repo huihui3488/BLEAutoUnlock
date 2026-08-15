@@ -446,6 +446,8 @@ def parse_args(argv=None):
     parser.add_argument("--set-password", action="store_true",
                         help="交互式加密保存 Windows 登录密码")
     parser.add_argument("--selftest", action="store_true", help="运行自检")
+    parser.add_argument("--gui", action="store_true",
+                        help="启动图形界面（配置 IRK/蓝牙阈值/判定时间）")
     parser.add_argument("--config", default=None,
                         help="配置文件路径（默认 main.py 同目录 config.json）")
     return parser.parse_args(argv)
@@ -509,6 +511,10 @@ def main(argv=None) -> int:
 
     if args.selftest:
         return run_selftest(args.config)
+
+    if args.gui:
+        from gui import main as gui_main
+        return gui_main(args.config)
 
     # 默认或 --run：前台运行
     run_foreground(config_path=args.config, stop_event=None, service_mode=False)

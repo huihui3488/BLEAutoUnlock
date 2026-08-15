@@ -25,10 +25,14 @@ ble_autounlock/
 ├── scanner.py           # BLE 扫描封装（bleak）+ 适配器异常重置（devcon / PowerShell PnP / btpair）
 ├── resolver.py          # 设备识别基类 + iOS IRK 解析 + Android 预留
 ├── actions.py           # 锁屏/解锁 Windows API 封装（LockWorkStation / WTSUnlockConsole / keyboard）
+├── gui.py               # tkinter 图形界面（配置 IRK/阈值/时间 + 启停监听）
 ├── config_manager.py    # 配置读写 + DPAPI 密码加解密
 ├── logger.py            # 日志配置（按天轮转，保留最近 3 天）
 ├── service.py           # Windows 服务封装（pywin32 win32serviceutil）
+├── build.bat            # 打包 GUI exe 的一键脚本
+├── BLEAutoUnlock.spec   # PyInstaller 打包配置
 ├── requirements.txt     # 依赖清单
+├── config.example.json  # 配置文件模板（不含任何密钥）
 ├── README.md            # 本文件
 └── tests/
     └── test_resolver.py # IRK/AES 算法向量测试
@@ -140,6 +144,41 @@ pythonw.exe C:\path\to\ble_autounlock\main.py --run
 ```
 
 使用 `pythonw.exe` 可无控制台窗口运行；任务计划程序中选择"使用最高权限运行"可提升键盘模拟解锁的成功率。
+
+## 图形界面（GUI）
+
+除了命令行，程序还带一个 tkinter 控制面板，可以可视化修改 IRK、蓝牙阈值、判定时间，并直接启停监听、实时查看 RSSI 与日志：
+
+```powershell
+python main.py --gui
+```
+
+面板包含：
+
+- 设备与密钥：设备类型（ios/android）、IRK、Android MAC、Windows 登录密码（DPAPI 加密保存）
+- 蓝牙阈值：解锁 RSSI、锁定 RSSI（dBm）
+- 判定时间：扫描间隔、单次扫描时长、靠近持续时长、离开累计时长、连续未检测次数
+- 高级选项：IRK 解析方法（ble_standard / legacy_hmac）、prand 位置
+- 操作：保存配置、开始/停止监听，以及实时 RSSI、会话状态与运行日志
+
+界面修改后点"保存配置"写入 `config.json`；点"开始监听"后后台运行扫描状态机，解锁/锁定动作与命令行模式完全一致。
+
+## 打包为 exe
+
+在**有网络**的 Windows 机器上双击运行 `build.bat`（或手动执行下面三条命令），即可生成单文件、无控制台窗口的 `dist\BLEAutoUnlock.exe`：
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller pyinstaller-hooks-contrib
+pyinstaller --noconfirm --clean BLEAutoUnlock.spec
+```
+
+说明：
+
+- exe 双击后直接打开图形界面；关闭窗口即退出监听。
+- 打包后的配置文件位于 `%APPDATA%\BLEAutoUnlock\config.json`（不会写进 exe 所在目录，避免 Program Files 等位置无写权限）。
+- 打包配置已包含 bleak 的 WinRT 后端与 pywin32 相关模块的收集规则；若杀毒软件误报，可添加信任或改用 `--onedir` 方式打包。
+- 首次打包需要几分钟，exe 约几十 MB（含 Python 运行时与 BLE 依赖）。
 
 ## 日志
 

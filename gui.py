@@ -1,10 +1,12 @@
 """图形界面入口（tkinter 控制面板）。
 
 功能：
-- 配置并保存：设备类型 / IRK / Android MAC / Windows 登录密码（DPAPI 加密）
+- 配置并保存：设备类型 / 命名 IRK 设备列表（可同时管理 iPhone、iPad 等）/
+  Android MAC / Windows 登录密码（DPAPI 加密）
 - 蓝牙阈值：解锁 RSSI、锁定 RSSI
 - 判定时间：扫描间隔、单次扫描时长、靠近持续时长、离开累计时长、连续未检测次数
 - 高级选项：IRK 解析方法、prand 位置
+- 二级菜单（帮助 → RSSI 距离对照表）：查看官方分级与参考距离换算
 - 启停监听：后台线程运行 BLE 扫描状态机，界面实时显示 RSSI 与会话状态
 - 日志面板：实时显示程序日志
 
@@ -91,10 +93,28 @@ class GuiLogHandler(logging.Handler):
 class BLEAutoUnlockApp:
     """tkinter 控制面板主程序。"""
 
+    # RSSI 距离对照表：基于 n=2 对数路径损耗模型并综合公开实测资料的参考值。
+    # 列顺序: (距离, 参考 RSSI dBm, 说明)
+    RSSI_DISTANCE_TABLE = (
+        ("0.1 m", "-31", "贴身 / 放在桌上"),
+        ("0.5 m", "-45", "Immediate（Apple iBeacon < 0.5 m）"),
+        ("1 m", "-51", "很近"),
+        ("2 m", "-57", "Near（Apple iBeacon 0.5~3 m）"),
+        ("3 m", "-60", "Near 上限，约等于默认解锁阈值"),
+        ("5 m", "-65", "中等距离"),
+        ("8 m", "-72", "较远"),
+        ("10 m", "-75", "Far 参考，约等于默认锁定阈值"),
+        ("15 m", "-82", "更远"),
+        ("20 m", "-88", "远 / 有遮挡"),
+        ("30 m", "-95", "极限 / 强遮挡"),
+    )
+
     def __init__(self, root: tk.Tk, config_path: Optional[str] = None):
         self.root = root
         self.config_path = config_path
         self.config = ConfigManager(config_path).load()
+        # 命名 IRK 设备列表，元素: {"name": str, "key": str}；与界面 Treeview 同步
+        self.irk_items = []
         self.msg_queue: "queue.Queue" = queue.Queue()
         self.stop_event = threading.Event()
         self.worker: Optional[threading.Thread] = None
@@ -181,8 +201,17 @@ class BLEAutoUnlockApp:
 
     def _build_ui(self) -> None:
         self.root.title("BLEAutoUnlock 控制面板")
-        self.root.geometry("720x720")
-        self.root.minsize(620, 620)
+        self.root.geometry("760x800")
+        self.root.minsize(660, 680)
+
+        # ---- 菜单栏（二级菜单）
+        menubar = tk.Menu(self.root)
+        menu_help = tk.Menu(menubar, tearoff=False)
+        menubar.add_cascade(label="帮助(H)", menu=menu_help)
+        menu_help.add_command(
+            label="RSSI 距离对照表", command=self._open_rssi_reference,
+        )
+        self.root.config(menu=menubar)
 
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
@@ -195,6 +224,7 @@ class BLEAutoUnlockApp:
         self.var_device = tk.StringVar(value="ios")
         self.var_android_mac = tk.StringVar()
         self.var_irk = tk.StringVar()
+        self.var_irk_name = tk.StringVar()
         self.var_password = tk.StringVar()
 
         ttk.Label(frm_device, text="设备类型:").grid(row=0, column=0, sticky="e", padx=(0, 6), pady=3)
@@ -209,21 +239,57 @@ class BLEAutoUnlockApp:
             row=0, column=3, sticky="w", pady=3,
         )
 
-        ttk.Label(frm_device, text="IRK (64位十六进制):").grid(
-            row=1, column=0, sticky="e", padx=(0, 6), pady=3,
+        # ---- 命名 IRK 设备列表（可添加多台设备）
+        ttk.Label(frm_device, text="IRK 设备列表:").grid(
+            row=1, column=0, sticky="ne", padx=(0, 6), pady=3,
         )
-        ttk.Entry(frm_device, textvariable=self.var_irk, width=46).grid(
-            row=1, column=1, columnspan=3, sticky="we", pady=3,
+        tree_frame = ttk.Frame(frm_device)
+        tree_frame.grid(row=1, column=1, columnspan=3, sticky="we", pady=3)
+        self.irk_tree = ttk.Treeview(
+            tree_frame, columns=("name", "key"), show="headings", height=4,
         )
+        self.irk_tree.heading("name", text="设备名称")
+        self.irk_tree.heading("key", text="IRK (64位十六进制)")
+        self.irk_tree.column("name", width=100, anchor="w")
+        self.irk_tree.column("key", width=320, anchor="w")
+        tree_scroll = ttk.Scrollbar(
+            tree_frame, orient="vertical", command=self.irk_tree.yview,
+        )
+        self.irk_tree.configure(yscrollcommand=tree_scroll.set)
+        self.irk_tree.pack(side="left", fill="both", expand=True)
+        tree_scroll.pack(side="right", fill="y")
+
+        # 添加 / 删除设备的一行输入控件
+        irk_entry_frame = ttk.Frame(frm_device)
+        irk_entry_frame.grid(row=2, column=1, columnspan=3, sticky="we", pady=3)
+        ttk.Label(irk_entry_frame, text="名称:").pack(side="left")
+        ttk.Entry(
+            irk_entry_frame, textvariable=self.var_irk_name, width=12,
+        ).pack(side="left", padx=(2, 10))
+        ttk.Label(irk_entry_frame, text="IRK:").pack(side="left")
+        ttk.Entry(
+            irk_entry_frame, textvariable=self.var_irk, width=30,
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            irk_entry_frame, text="添加", command=self._on_add_irk,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            irk_entry_frame, text="删除选中", command=self._on_delete_irk,
+        ).pack(side="left", padx=(6, 0))
+
+        ttk.Label(
+            frm_device, foreground="#666666",
+            text="IRK 为 64 位十六进制（32 字符）；可添加多台命名设备，任一命中即视为靠近",
+        ).grid(row=3, column=1, columnspan=3, sticky="w", padx=0, pady=(0, 2))
 
         ttk.Label(frm_device, text="Windows 密码:").grid(
-            row=2, column=0, sticky="e", padx=(0, 6), pady=3,
+            row=4, column=0, sticky="e", padx=(0, 6), pady=3,
         )
         ttk.Entry(frm_device, textvariable=self.var_password, show="*", width=28).grid(
-            row=2, column=1, sticky="w", pady=3,
+            row=4, column=1, sticky="w", pady=3,
         )
         ttk.Button(frm_device, text="DPAPI 加密保存密码", command=self._on_save_password).grid(
-            row=2, column=2, columnspan=2, sticky="w", padx=(16, 0), pady=3,
+            row=4, column=2, columnspan=2, sticky="w", padx=(16, 0), pady=3,
         )
 
         # ---- 蓝牙阈值
@@ -315,7 +381,22 @@ class BLEAutoUnlockApp:
         """把配置文件的值填充到界面控件。"""
         self.var_device.set(str(self.config.get("device_type", "ios")))
         self.var_android_mac.set(str(self.config.get("android_mac", "") or ""))
-        self.var_irk.set(str(self.config.get("irk_key", "") or ""))
+
+        # 命名 IRK 列表：优先读取 irk_keys；为空时兼容旧版单 irk_key 配置
+        self.irk_items = []
+        for index, item in enumerate(self.config.get("irk_keys") or []):
+            if isinstance(item, dict):
+                name = str(item.get("name", "") or "").strip() or f"设备{index + 1}"
+                key = str(item.get("key", "") or "").strip()
+            else:
+                name, key = f"设备{index + 1}", str(item or "").strip()
+            self.irk_items.append({"name": name, "key": key})
+        if not self.irk_items and self.config.get("irk_key"):
+            self.irk_items.append({
+                "name": "默认", "key": str(self.config.get("irk_key", "")).strip(),
+            })
+        self._refresh_irk_tree()
+
         self.var_unlock_rssi.set(str(self.config.get("unlock_rssi", -60)))
         self.var_lock_rssi.set(str(self.config.get("lock_rssi", -75)))
         self.var_scan_interval.set(str(self.config.get("scan_interval", 2)))
@@ -325,6 +406,52 @@ class BLEAutoUnlockApp:
         self.var_misses.set(str(self.config.get("miss_count_before_lock", 5)))
         self.var_method.set(str(self.config.get("irk_resolve_method", "ble_standard")))
         self.var_prand.set(str(self.config.get("irk_prand_position", "") or ""))
+
+    def _refresh_irk_tree(self) -> None:
+        """把 self.irk_items 同步显示到 Treeview 列表。"""
+        for item in self.irk_tree.get_children():
+            self.irk_tree.delete(item)
+        for index, entry in enumerate(self.irk_items):
+            self.irk_tree.insert(
+                "", tk.END, iid=str(index),
+                values=(entry["name"], entry["key"]),
+            )
+
+    def _on_add_irk(self) -> None:
+        """把界面上的名称 + IRK 校验后加入命名设备列表。"""
+        name = self.var_irk_name.get().strip()
+        key = self.var_irk.get().strip()
+        if not key:
+            messagebox.showwarning("提示", "请先填写要添加的 IRK")
+            return
+        compact = key.lower().replace("0x", "")
+        if len(compact) != 32:
+            messagebox.showerror("格式错误", "IRK 必须是 64 位十六进制字符串（32 个字符）")
+            return
+        try:
+            bytes.fromhex(compact)
+        except ValueError:
+            messagebox.showerror("格式错误", "IRK 包含非法十六进制字符")
+            return
+        if not name:
+            name = f"设备{len(self.irk_items) + 1}"
+        self.irk_items.append({"name": name, "key": compact})
+        self.var_irk_name.set("")
+        self.var_irk.set("")
+        self._refresh_irk_tree()
+        self._append_log(f"已添加设备: {name}")
+
+    def _on_delete_irk(self) -> None:
+        """删除 Treeview 中选中的设备。"""
+        selection = self.irk_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先在列表中选中要删除的设备")
+            return
+        # 从大到小删除，避免前面删除导致后面索引错位
+        for iid in sorted((int(item) for item in selection), reverse=True):
+            self.irk_items.pop(iid)
+        self._refresh_irk_tree()
+        self._append_log("已删除选中的设备")
 
     # ------------------------------------------------------------- 配置读写
 
@@ -338,16 +465,25 @@ class BLEAutoUnlockApp:
             if device_type not in ("ios", "android"):
                 return False, "设备类型只能是 ios 或 android"
 
-            irk = self.var_irk.get().strip()
-            if device_type == "ios" and irk:
-                compact = irk.lower().replace("0x", "")
+            # 收集并兜底校验命名 IRK 列表（添加时已校验，此处防止状态漂移）
+            irk_keys = []
+            for entry in self.irk_items:
+                name = str(entry.get("name", "") or "").strip()
+                key = str(entry.get("key", "") or "").strip()
+                compact = key.lower().replace("0x", "")
+                if not compact:
+                    continue
                 if len(compact) != 32:
-                    return False, "IRK 必须是 64 位十六进制字符串（32 个字符）"
+                    return False, f"设备「{name}」的 IRK 必须是 64 位十六进制字符串（32 个字符）"
                 try:
                     bytes.fromhex(compact)
                 except ValueError:
-                    return False, "IRK 包含非法十六进制字符"
-            elif device_type == "android":
+                    return False, f"设备「{name}」的 IRK 包含非法十六进制字符"
+                irk_keys.append({"name": name, "key": compact})
+
+            if device_type == "ios" and not irk_keys:
+                return False, "device_type=ios 时需要至少一个 IRK（请先添加设备）"
+            if device_type == "android":
                 mac = self.var_android_mac.get().strip()
                 if not mac:
                     return False, "device_type=android 时需要填写 Android MAC"
@@ -369,7 +505,8 @@ class BLEAutoUnlockApp:
 
             values = {
                 "device_type": device_type,
-                "irk_key": irk,
+                "irk_keys": irk_keys,
+                "irk_key": irk_keys[0]["key"] if irk_keys else "",
                 "android_mac": self.var_android_mac.get().strip(),
                 "unlock_rssi": unlock_rssi,
                 "lock_rssi": lock_rssi,
@@ -412,6 +549,48 @@ class BLEAutoUnlockApp:
             return
         self.var_password.set("")
         self._append_log("Windows 登录密码已通过 DPAPI 加密保存")
+
+    # ------------------------------------------------------------- 帮助菜单
+
+    def _open_rssi_reference(self) -> None:
+        """弹出“RSSI 距离对照表”二级菜单窗口（非模态，可边看边调阈值）。"""
+        top = tk.Toplevel(self.root)
+        top.title("RSSI 距离对照表")
+        top.geometry("660x480")
+        top.transient(self.root)
+
+        frame = ttk.Frame(top, padding=10)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame, text="BLE RSSI 与距离的参考对照（仅供参考）",
+            font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 6))
+
+        tree = ttk.Treeview(
+            frame, columns=("distance", "rssi", "note"),
+            show="headings", height=12,
+        )
+        tree.heading("distance", text="距离")
+        tree.heading("rssi", text="参考 RSSI (dBm)")
+        tree.heading("note", text="说明")
+        tree.column("distance", width=80, anchor="center")
+        tree.column("rssi", width=120, anchor="center")
+        tree.column("note", width=400, anchor="w")
+        for row in self.RSSI_DISTANCE_TABLE:
+            tree.insert("", tk.END, values=row)
+        tree.pack(fill="both", expand=True)
+
+        note = (
+            "参考依据：Apple iBeacon / CLProximity 官方分级（Immediate≈<0.5 m、"
+            "Near≈0.5~3 m、Far≈>3 m），数值综合 BLE 实测与 n=2 对数路径损耗模型。\n"
+            "注意：实际 RSSI 受设备发射功率、天线方向、人体遮挡、墙体与 2.4GHz 干扰"
+            "影响，不同 iPhone 差异可达 10 dBm 以上，请用你手机的实测值校准阈值。"
+        )
+        ttk.Label(
+            frame, text=note, foreground="#666666",
+            wraplength=620, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
 
     # ------------------------------------------------------------- 监听控制
 

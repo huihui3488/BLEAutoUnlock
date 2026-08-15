@@ -2,7 +2,8 @@
 
 - BaseResolver：抽象基类，所有识别器都实现 matches(address, rssi)
 - IOSResolver：使用 IRK（Identity Resolving Key）解析 iPhone 的
-  随机可解析私有地址（Resolvable Private Address, RPA）
+  随机可解析私有地址（Resolvable Private Address, RPA）；
+  支持同时配置多个命名 IRK（如 iPhone、iPad），任一命中即视为目标设备
   * ble_standard（推荐，BLE 标准算法）：
       r' = 13 个零字节 + prand
       hash = AES-128-ECB(key=IRK, data=r') 的最低 24 位（即密文最后 3 字节）
@@ -204,14 +205,31 @@ class BaseResolver(ABC):
 
 
 class IOSResolver(BaseResolver):
-    """iOS 设备识别：用 IRK 解析 iPhone 的随机可解析私有地址。"""
+    """iOS 设备识别：用 IRK 解析 iPhone 的随机可解析私有地址。
 
-    def __init__(self, irk_key: str,
+    支持多个命名 IRK（irk_keys），任一 IRK 能解析该地址即匹配，
+    便于同时管理 iPhone、iPad 等多台设备。
+    """
+
+    @staticmethod
+    def _parse_irk(irk_key: str) -> bytes:
+        """校验并转换单个 64 位十六进制 IRK 为 16 字节。"""
+        irk_hex = str(irk_key or "").strip().lower().replace("0x", "")
+        if len(irk_hex) != 32:
+            raise ResolverError("IRK 必须是 64 位十六进制字符串（32 个字符）")
+        try:
+            return bytes.fromhex(irk_hex)
+        except ValueError as exc:
+            raise ResolverError("IRK 包含非法十六进制字符") from exc
+
+    def __init__(self, irk_key: Optional[str] = None,
+                 irk_keys: Optional[list] = None,
                  method: str = "ble_standard",
                  prand_position: Optional[str] = None):
         """初始化 IRK 解析器。
 
-        :param irk_key: 64 位十六进制 IRK 密钥（32 个十六进制字符）
+        :param irk_key: 单个 64 位十六进制 IRK（兼容旧配置，与 irk_keys 二选一）
+        :param irk_keys: 命名 IRK 列表，元素为 {"name": str, "key": str}
         :param method: ble_standard（BLE 标准 AES-128）或 legacy_hmac
         :param prand_position: head（prand 在地址前 3 字节，默认，
             适用于 bleak 返回的大端序 MAC 字符串）/ tail（prand 在
@@ -219,13 +237,25 @@ class IOSResolver(BaseResolver):
             为 None 时按方法取默认：ble_standard -> head，
             legacy_hmac -> tail。
         """
-        irk_hex = str(irk_key or "").strip().lower().replace("0x", "")
-        if len(irk_hex) != 32:
-            raise ResolverError("irk_key 必须是 64 位十六进制字符串（32 个字符）")
-        try:
-            self.irk = bytes.fromhex(irk_hex)
-        except ValueError as exc:
-            raise ResolverError("irk_key 包含非法十六进制字符") from exc
+        self.irks: List[bytes] = []
+        self.irk_names: List[str] = []
+        entries = irk_keys or []
+        if entries:
+            for index, item in enumerate(entries):
+                if isinstance(item, dict):
+                    name = str(item.get("name", "") or "").strip()
+                    key = str(item.get("key", "") or "")
+                else:
+                    name, key = "", str(item)
+                self.irks.append(self._parse_irk(key))
+                self.irk_names.append(name or f"IRK-{index + 1}")
+        elif irk_key:
+            self.irks.append(self._parse_irk(irk_key))
+            self.irk_names.append("默认")
+        else:
+            raise ResolverError("未配置 IRK（请提供 irk_key 或 irk_keys）")
+        # 兼容旧代码：self.irk 指向第一个 IRK
+        self.irk = self.irks[0]
 
         self.method = str(method or "ble_standard").lower()
         if self.method not in ("ble_standard", "legacy_hmac"):
@@ -241,7 +271,9 @@ class IOSResolver(BaseResolver):
 
     @property
     def description(self) -> str:
-        return f"iOS (IRK, 方法={self.method}, prand位置={self.prand_position})"
+        names = "、".join(self.irk_names)
+        return (f"iOS (IRK×{len(self.irks)}: {names}, "
+                f"方法={self.method}, prand位置={self.prand_position})")
 
     def _prand_and_hash(self, addr: bytes) -> tuple[bytes, bytes]:
         """按配置的字节序拆出 prand 与 hash 字段。"""
@@ -287,7 +319,10 @@ class IOSResolver(BaseResolver):
         addr = normalize_address(address)
         if addr is None or not self._is_resolvable_private(addr):
             return False
-        return self.resolve_identity(self.irk, addr)
+        for irk in self.irks:
+            if self.resolve_identity(irk, addr):
+                return True
+        return False
 
 
 class AndroidResolver(BaseResolver):
@@ -313,11 +348,13 @@ def create_resolver(config) -> BaseResolver:
     """根据配置构建设备识别器。"""
     device_type = str(config.get("device_type", "ios")).strip().lower()
     if device_type == "ios":
-        irk_key = config.get("irk_key", "") or ""
-        if not str(irk_key).strip():
-            raise ResolverError("config.json 缺少 irk_key（64 位十六进制 IRK）")
+        irk_key = str(config.get("irk_key", "") or "").strip()
+        irk_keys = config.get("irk_keys") or []
+        if not irk_keys and not irk_key:
+            raise ResolverError("config.json 缺少 IRK（请配置 irk_key 或 irk_keys）")
         return IOSResolver(
-            str(irk_key),
+            irk_key=irk_key or None,
+            irk_keys=irk_keys or None,
             method=config.get("irk_resolve_method", "ble_standard"),
             prand_position=config.get("irk_prand_position"),
         )

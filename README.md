@@ -23,9 +23,9 @@ BLE 扫描(bleak) ──> 设备识别(resolver, IRK) ──> RSSI 状态机 ─
 ble_autounlock/
 ├── main.py              # 程序入口：--run / --install / --uninstall / --set-password / --selftest
 ├── scanner.py           # BLE 扫描封装（bleak）+ 适配器异常重置（devcon / PowerShell PnP / btpair）
-├── resolver.py          # 设备识别基类 + iOS IRK 解析 + Android 预留
+├── resolver.py          # 设备识别基类 + iOS IRK 解析（支持多台命名设备）+ Android 预留
 ├── actions.py           # 锁屏/解锁 Windows API 封装（LockWorkStation / WTSUnlockConsole / keyboard）
-├── gui.py               # tkinter 图形界面（配置 IRK/阈值/时间 + 启停监听）
+├── gui.py               # tkinter 图形界面（命名 IRK 列表/阈值/时间 + RSSI 对照表 + 启停监听）
 ├── config_manager.py    # 配置读写 + DPAPI 密码加解密
 ├── logger.py            # 日志配置（按天轮转，保留最近 3 天）
 ├── service.py           # Windows 服务封装（pywin32 win32serviceutil）
@@ -63,7 +63,8 @@ python main.py --selftest
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `device_type` | `ios` | `ios`（IRK 随机地址）或 `android`（固定 MAC，预留） |
-| `irk_key` | 空 | 64 位十六进制 IRK（32 个字符），见下文"获取 IRK" |
+| `irk_key` | 空 | 单个 64 位十六进制 IRK（32 个字符）；使用 `irk_keys` 时自动同步第一个设备密钥 |
+| `irk_keys` | `[]` | 命名 IRK 列表，元素为 `{"name": "设备名", "key": "64位十六进制IRK"}`，可同时管理 iPhone、iPad 等多台设备，任一命中即视为目标 |
 | `android_mac` | 空 | Android 固定 MAC（预留） |
 | `windows_password` | 空 | DPAPI 加密后的密码（base64），**绝不明文**，用 `--set-password` 生成 |
 | `unlock_rssi` | `-60` | RSSI 高于该值视为"靠近"，持续达标后解锁 |
@@ -88,7 +89,16 @@ python main.py --selftest
 2. **macOS 钥匙串**：在 macOS 上登录同一 Apple ID，从钥匙串导出蓝牙 IRK（`bluetoothd` / 配对记录）。
 3. **Windows 注册表（SYSTEM 权限）**：用 psexec 以 SYSTEM 权限读取 `HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys` 下的 IRK 值。
 
-把 IRK 填进 `config.json` 的 `irk_key` 字段（32 个十六进制字符）。
+把 IRK 填进 `config.json` 的 `irk_key` 字段（32 个十六进制字符）。如果有多台设备（例如手机 + iPad），建议改用 `irk_keys` 命名列表：
+
+```json
+"irk_keys": [
+  { "name": "iPhone", "key": "你的iPhone-IRK-32位十六进制" },
+  { "name": "iPad",   "key": "你的iPad-IRK-32位十六进制" }
+]
+```
+
+`irk_keys` 优先于 `irk_key`；GUI 中也可以直接在"IRK 设备列表"里命名添加多台设备，保存后自动写入该字段。
 
 ### 关于随机地址字节序（重要）
 
@@ -155,10 +165,11 @@ python main.py --gui
 
 面板包含：
 
-- 设备与密钥：设备类型（ios/android）、IRK、Android MAC、Windows 登录密码（DPAPI 加密保存）
+- 设备与密钥：设备类型（ios/android）、**命名 IRK 设备列表**（可添加/删除 iPhone、iPad 等多台设备并各自命名）、Android MAC、Windows 登录密码（DPAPI 加密保存）
 - 蓝牙阈值：解锁 RSSI、锁定 RSSI（dBm）
 - 判定时间：扫描间隔、单次扫描时长、靠近持续时长、离开累计时长、连续未检测次数
 - 高级选项：IRK 解析方法（ble_standard / legacy_hmac）、prand 位置
+- 二级菜单：帮助(H) → **RSSI 距离对照表**，查看 Apple iBeacon 官方分级与不同距离对应的参考 RSSI，便于校准解锁/锁定阈值
 - 操作：保存配置、开始/停止监听，以及实时 RSSI、会话状态与运行日志
 
 界面修改后点"保存配置"写入 `config.json`；点"开始监听"后后台运行扫描状态机，解锁/锁定动作与命令行模式完全一致。

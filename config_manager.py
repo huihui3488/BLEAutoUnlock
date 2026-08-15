@@ -26,6 +26,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "device_type": "ios",
     # 64 位十六进制 IRK 密钥（32 个十六进制字符）
     "irk_key": "",
+    # 命名 IRK 列表，可同时管理多台 iOS 设备（如 iPhone、iPad）。
+    # 元素格式: {"name": "设备名", "key": "64位十六进制IRK"}；
+    # 为空列表时回退使用上面的 irk_key 单密钥配置
+    "irk_keys": [],
     # Android 固定 MAC 地址（预留）
     "android_mac": "",
     # DPAPI 加密后的 Windows 登录密码（base64），绝不明文保存

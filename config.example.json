@@ -1,6 +1,12 @@
 {
   "device_type": "ios",
   "irk_key": "your-64-bit-hex-irk-key-here",
+  "irk_keys": [
+    {
+      "name": "iPhone",
+      "key": "your-64-bit-hex-irk-key-here"
+    }
+  ],
   "android_mac": "AA:BB:CC:DD:EE:FF",
   "windows_password": "",
   "unlock_rssi": -60,
